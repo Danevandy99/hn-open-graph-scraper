@@ -2,12 +2,18 @@
 const express = require("express");
 const ogs = require('open-graph-scraper');
 const cors = require('cors');
-const linkPreviewGenerator = require("link-preview-generator");
-const captureWebsite = require('capture-website');
 var mcache = require('memory-cache');
+const metascraper = require('metascraper')([
+  require('metascraper-image')(),
+]);
+const got = require('got');
 
 var cache = (duration) => {
   return (req, res, next) => {
+    if (!req.query.url) {
+      next();
+      return;
+    }
     let key = '__express__' + req.originalUrl || req.url
     let cachedBody = mcache.get(key);
     if (cachedBody) {
@@ -17,7 +23,7 @@ var cache = (duration) => {
     } else {
       res.sendResponse = res.send
       res.send = (body) => {
-        console.log("caching");
+        console.log("caching for " + req.query.url);
         mcache.put(key, body, duration * 1000);
         res.sendResponse(body);
       }
@@ -34,23 +40,24 @@ app.use(cors())
 app.get("/", cache(60 * 5), async (req, res) => {
   try {
     let url = req.query.url;
-    if (!url) {
-      res.status(403).send("Must include url query param");
-      return;
-    }
-    
-    const previewData = await linkPreviewGenerator(url);
-    if (previewData.img) {
-      res.json(previewData.img);
+    let title = req.query.title;
+    if (!url || !title) {
+      res.status(403).send("Must include url and title query parameters");
       return;
     }
 
-    const screenshot = await captureWebsite.base64(url, {
-      timout: 15,
-      scaleFactor: 1
-    });
-    if (screenshot) {
-      res.json("data:image/png;base64," + screenshot);
+    const { body: html, _ } = await got(url)
+    const metadata = await metascraper({ html, url })
+    console.log(metadata);
+    if (metadata.image) {
+      res.json(metadata.image);
+      return;
+    }
+
+    let { body: json, _2 } = await got("https://api.unsplash.com/search/photos?query=Back in 1993, I was taking a number theory class&client_id=3OvKMi4PToRpzbMaoQwQGSD6wH7ornSlpNtaTrkcumE");
+    json = JSON.parse(json);
+    if (json.results[0].urls.small) {
+      res.json(json.results[0].urls.small);
       return;
     }
 
@@ -62,5 +69,6 @@ app.get("/", cache(60 * 5), async (req, res) => {
 })
 
 // start the server listening for requests
-app.listen(process.env.PORT || 3000,
-  () => console.log("Server is running..."));
+app.listen(process.env.PORT || 3000, () => {
+  console.log("Server is running...")
+});
